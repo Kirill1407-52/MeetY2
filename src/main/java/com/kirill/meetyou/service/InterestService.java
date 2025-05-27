@@ -34,11 +34,12 @@ public class InterestService {
         validateInterestName(interestType);
         User user = getUserById(userId);
 
-        Interest interest = interestRepository.findByInterestType(interestType)
-                .orElseGet(() -> createNewInterest(interestType));
+        String formattedInterestType = formatInterestName(interestType);
+        Interest interest = interestRepository.findByInterestType(formattedInterestType)
+                .orElseGet(() -> createNewInterest(formattedInterestType));
 
         if (user.getInterests().contains(interest)) {
-            log.warn("Попытка добавить существующий интерес: {}", interestType);
+            log.warn("Попытка добавить существующий интерес: {}", formattedInterestType);
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "У пользователя уже есть этот интерес");
         }
@@ -47,7 +48,7 @@ public class InterestService {
         User updatedUser = userRepository.save(user);
         userCache.put(userId, updatedUser);
 
-        log.info(String.format(INTEREST_ADDED, interestType, userId));
+        log.info(String.format(INTEREST_ADDED, formattedInterestType, userId));
     }
 
     @Transactional
@@ -56,10 +57,11 @@ public class InterestService {
 
         validateInterestName(interestName);
         User user = getUserById(userId);
-        Interest interest = getInterestByName(interestName);
+        String formattedInterestName = formatInterestName(interestName);
+        Interest interest = getInterestByName(formattedInterestName);
 
         if (!user.getInterests().contains(interest)) {
-            log.warn("Попытка удалить отсутствующий интерес: {}", interestName);
+            log.warn("Попытка удалить отсутствующий интерес: {}", formattedInterestName);
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "У пользователя нет этого интереса");
         }
@@ -68,49 +70,57 @@ public class InterestService {
         User updatedUser = userRepository.save(user);
         userCache.put(userId, updatedUser);
 
-        log.info(String.format(INTEREST_REMOVED, interestName, userId));
+        log.info(String.format(INTEREST_REMOVED, formattedInterestName, userId));
     }
 
     @Transactional
     public Interest updateInterest(Long userId, Long interestId, Interest updatedInterest) {
         validateInterestName(updatedInterest.getInterestType());
+        String formattedInterestType = formatInterestName(updatedInterest.getInterestType());
+        updatedInterest.setInterestType(formattedInterestType);
+
         User user = getUserById(userId);
         Interest existingInterest = interestRepository.findById(interestId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, INTEREST_NOT_FOUND));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        INTEREST_NOT_FOUND));
 
         // Проверка, что этот интерес привязан к пользователю
         if (!user.getInterests().contains(existingInterest)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Интерес не принадлежит пользователю");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Интерес не принадлежит пользователю");
         }
 
         // Проверка, не используется ли новое имя другим интересом
-        if (interestRepository.existsByInterestType(updatedInterest.getInterestType()) &&
-                !existingInterest.getInterestType().equals(updatedInterest.getInterestType())) {
+        if (interestRepository.existsByInterestType(formattedInterestType)
+                && !existingInterest.getInterestType().equals(formattedInterestType)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, INTEREST_ALREADY_EXISTS);
         }
 
-        existingInterest.setInterestType(updatedInterest.getInterestType().trim());
+        existingInterest.setInterestType(formattedInterestType);
         return interestRepository.save(existingInterest);
     }
 
     @Transactional
     public void updateUserInterest(Long userId, Long interestId, String newInterestName) {
         validateInterestName(newInterestName);
+        String formattedInterestName = formatInterestName(newInterestName);
         User user = getUserById(userId);
 
         Interest oldInterest = interestRepository.findById(interestId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, INTEREST_NOT_FOUND));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        INTEREST_NOT_FOUND));
 
         if (!user.getInterests().contains(oldInterest)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Интерес не принадлежит пользователю");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Интерес не принадлежит пользователю");
         }
 
         // Удаляем старый интерес у пользователя
         user.getInterests().remove(oldInterest);
 
         // Ищем или создаем новый интерес
-        Interest newInterest = interestRepository.findByInterestType(newInterestName)
-                .orElseGet(() -> createNewInterest(newInterestName));
+        Interest newInterest = interestRepository.findByInterestType(formattedInterestName)
+                .orElseGet(() -> createNewInterest(formattedInterestName));
 
         // Добавляем новый интерес пользователю
         user.getInterests().add(newInterest);
@@ -118,7 +128,6 @@ public class InterestService {
         userRepository.save(user);
         userCache.put(userId, user);
     }
-
 
     @Transactional(readOnly = true)
     public Set<Interest> getUserInterests(Long userId) {
@@ -135,21 +144,23 @@ public class InterestService {
     }
 
     private Interest getInterestByName(String interestName) {
-        return interestRepository.findByInterestType(interestName)
+        String formattedInterestName = formatInterestName(interestName);
+        return interestRepository.findByInterestType(formattedInterestName)
                 .orElseThrow(() -> {
-                    log.warn(INTEREST_NOT_FOUND + ": {}", interestName);
+                    log.warn(INTEREST_NOT_FOUND + ": {}", formattedInterestName);
                     return new ResponseStatusException(HttpStatus.NOT_FOUND, INTEREST_NOT_FOUND);
                 });
     }
 
     private Interest createNewInterest(String interestType) {
-        if (interestRepository.existsByInterestType(interestType)) {
-            log.warn(INTEREST_ALREADY_EXISTS + ": {}", interestType);
+        String formattedInterestType = formatInterestName(interestType);
+        if (interestRepository.existsByInterestType(formattedInterestType)) {
+            log.warn(INTEREST_ALREADY_EXISTS + ": {}", formattedInterestType);
             throw new ResponseStatusException(HttpStatus.CONFLICT, INTEREST_ALREADY_EXISTS);
         }
 
         Interest newInterest = new Interest();
-        newInterest.setInterestType(interestType.trim());
+        newInterest.setInterestType(formattedInterestType);
         return interestRepository.save(newInterest);
     }
 
@@ -159,5 +170,14 @@ public class InterestService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Название интереса не может быть пустым");
         }
+    }
+
+    public String formatInterestName(String interestName) {
+        if (interestName == null || interestName.isEmpty()) {
+            return interestName;
+        }
+        String trimmed = interestName.trim();
+        return trimmed.substring(0, 1).toUpperCase()
+                + trimmed.substring(1).toLowerCase();
     }
 }

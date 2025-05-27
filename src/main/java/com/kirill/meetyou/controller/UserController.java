@@ -5,6 +5,7 @@ import com.kirill.meetyou.dto.UserCreateDto;
 import com.kirill.meetyou.dto.UserUpdateDto;
 import com.kirill.meetyou.model.User;
 import com.kirill.meetyou.repository.UserRepository;
+import com.kirill.meetyou.service.InterestService;
 import com.kirill.meetyou.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -31,6 +32,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class UserController {
     private final UserService userService;
     private final UserRepository userRepository;
+    private final InterestService interestService;
 
     @Operation(summary = "Получить всех пользователей",
             description = "Возвращает список всех пользователей системы")
@@ -103,7 +105,8 @@ public class UserController {
     @GetMapping("/by-interest")
     public ResponseEntity<List<User>> getUsersByInterest(
             @RequestParam String interestType) {
-        return ResponseEntity.ok(userRepository.findUsersByInterestType(interestType));
+        String formattedInterest = interestService.formatInterestName(interestType);
+        return ResponseEntity.ok(userRepository.findUsersByInterestType(formattedInterest));
     }
 
     @Operation(summary = "Поиск по всем интересам",
