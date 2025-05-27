@@ -9,7 +9,6 @@ import com.kirill.meetyou.repository.UserRepository;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -19,10 +18,23 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class MessageService {
+    private static final String USER_NOT_FOUND_MSG = "Пользователь не найден";
+    private static final String USER_NOT_FOUND_LOG = "❌ Пользователь не найден: ID {}";
+    private static final String INTERLOCUTOR_NOT_FOUND_LOG = "❌ Собеседник не найден: ID {}";
+    private static final String TIMESTAMP_PATTERN = "yyyy-MM-dd HH:mm:ss";
+
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
     private static final DateTimeFormatter TIMESTAMP_FORMATTER =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            DateTimeFormatter.ofPattern(TIMESTAMP_PATTERN);
+
+    private User findUserOrThrow(Long userId, String errorLog) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> {
+                    log.error(errorLog, userId);
+                    return new ResourceNotFoundException(USER_NOT_FOUND_MSG);
+                });
+    }
 
     @Transactional
     public MessageDto sendMessage(Long senderId, Long receiverId, String content) {
@@ -34,19 +46,8 @@ public class MessageService {
             throw new IllegalArgumentException("Текст сообщения не может быть пустым");
         }
 
-        User sender;
-        sender = userRepository.findById(senderId)
-                .orElseThrow(() -> {
-                    log.error("❌ Отправитель не найден: ID {}", senderId);
-                    return new ResourceNotFoundException("Отправитель не найден");
-                });
-
-        User receiver;
-        receiver = userRepository.findById(receiverId)
-                .orElseThrow(() -> {
-                    log.error("❌ Получатель не найден: ID {}", receiverId);
-                    return new ResourceNotFoundException("Получатель не найден");
-                });
+        User sender = findUserOrThrow(senderId, USER_NOT_FOUND_LOG);
+        User receiver = findUserOrThrow(receiverId, USER_NOT_FOUND_LOG);
 
         if (senderId.equals(receiverId)) {
             log.warn("⚠️ Попытка самосообщения: {}", senderId);
@@ -66,7 +67,6 @@ public class MessageService {
                 senderId,
                 receiverId,
                 savedMessage.getTimestamp().format(TIMESTAMP_FORMATTER));
-        log.debug("Полные данные сообщения: {}", savedMessage);
 
         return convertToDto(savedMessage);
     }
@@ -75,27 +75,24 @@ public class MessageService {
     public List<MessageDto> getConversation(Long user1Id, Long user2Id) {
         log.info("📖 Запрос переписки между {} и {}", user1Id, user2Id);
 
-        User user1 = userRepository.findById(user1Id)
-                .orElseThrow(() -> {
-                    log.error("❌ Пользователь не найден: ID {}", user1Id);
-                    return new ResourceNotFoundException("Пользователь не найден");
-                });
+        User user1 = findUserOrThrow(user1Id, USER_NOT_FOUND_LOG);
+        User user2 = findUserOrThrow(user2Id, USER_NOT_FOUND_LOG);
 
-        User user2 = userRepository.findById(user2Id)
-                .orElseThrow(() -> {
-                    log.error("❌ Пользователь не найден: ID {}", user2Id);
-                    return new ResourceNotFoundException("Пользователь не найден");
-                });
-
-        List<MessageDto> conversation = messageRepository.findConversation(user1, user2).stream()
+        List<MessageDto> conversation = messageRepository.findConversation(user1, user2)
+                .stream()
                 .map(this::convertToDto)
-                .collect(Collectors.toList());
+                .toList();
 
-        log.info("📊 Найдено {} сообщений в переписке", conversation.size());
-        log.debug("Первые 3 сообщения: {}",
-                conversation.stream().limit(3).collect(Collectors.toList()));
-
+        logConversationStats(conversation);
         return conversation;
+    }
+
+    private void logConversationStats(List<MessageDto> conversation) {
+        log.info("📊 Найдено {} сообщений в переписке", conversation.size());
+        if (!conversation.isEmpty()) {
+            log.debug("Первые сообщения: {}",
+                    conversation.stream().limit(3).toList());
+        }
     }
 
     @Transactional
@@ -103,22 +100,13 @@ public class MessageService {
         log.info("👁️ Пользователь {} помечает сообщения от {} как прочитанные",
                 userId, interlocutorId);
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> {
-                    log.error("❌ Пользователь не найден: ID {}", userId);
-                    return new ResourceNotFoundException("Пользователь не найден");
-                });
+        User user = findUserOrThrow(userId, USER_NOT_FOUND_LOG);
+        User interlocutor = findUserOrThrow(interlocutorId, INTERLOCUTOR_NOT_FOUND_LOG);
 
-        User interlocutor = userRepository.findById(interlocutorId)
-                .orElseThrow(() -> {
-                    log.error("❌ Собеседник не найден: ID {}", interlocutorId);
-                    return new ResourceNotFoundException("Собеседник не найден");
-                });
+        List<Message> unreadMessages = messageRepository
+                .findByReceiverAndSenderAndIsReadFalse(user, interlocutor);
 
-        List<Message> unreadMessages =
-                messageRepository.findByReceiverAndSenderAndIsReadFalse(user, interlocutor);
-
-        log.info("📌 Найдено {} непрочитанных сообщений", unreadMessages.size());
+        logUnreadMessagesCount(unreadMessages.size());
 
         unreadMessages.forEach(message -> {
             message.setRead(true);
@@ -129,23 +117,22 @@ public class MessageService {
         log.info("✅ Все сообщения от {} помечены как прочитанные", interlocutorId);
     }
 
+    private void logUnreadMessagesCount(int count) {
+        log.info("📌 Найдено {} непрочитанных сообщений", count);
+    }
+
     @Transactional(readOnly = true)
     public long getUnreadMessagesCount(Long userId) {
         log.debug("🔍 Запрос количества непрочитанных сообщений для {}", userId);
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> {
-                    log.error("❌ Пользователь не найден: ID {}", userId);
-                    return new ResourceNotFoundException("Пользователь не найден");
-                });
-
+        User user = findUserOrThrow(userId, USER_NOT_FOUND_LOG);
         long count = messageRepository.countByReceiverAndIsReadFalse(user);
 
         log.info("📊 Пользователь {} имеет {} непрочитанных сообщений", userId, count);
         return count;
     }
 
-    public MessageDto convertToDto(Message message) {
+    private MessageDto convertToDto(Message message) {
         return MessageDto.builder()
                 .id(message.getId())
                 .content(message.getContent())
